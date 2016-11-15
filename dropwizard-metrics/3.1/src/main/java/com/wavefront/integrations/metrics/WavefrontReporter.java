@@ -29,6 +29,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.SortedMap;
 import java.util.concurrent.TimeUnit;
+import java.net.ConnectException;
 
 /**
  * A reporter which publishes metric values to a Wavefront Proxy.
@@ -213,6 +214,11 @@ public class WavefrontReporter extends ScheduledReporter {
   private final String source;
   private final Map<String, String> pointTags;
 
+  private Counter connectExceptions = new Counter();
+  private Counter ioExceptions = new Counter();
+  private Counter successes = new Counter();
+  private Counter failures = new Counter();
+
   private WavefrontReporter(MetricRegistry registry,
                             String proxyHostname,
                             int proxyPort,
@@ -230,6 +236,12 @@ public class WavefrontReporter extends ScheduledReporter {
     this.prefix = prefix;
     this.source = source;
     this.pointTags = pointTags;
+
+    registry.register("reporter.connect-exceptions", connectExceptions);
+    registry.register("reporter.io-exceptions", ioExceptions);
+    registry.register("reporter.failures", failures);
+    registry.register("reporter.success", successes);
+
 
     if (includeJvmMetrics) {
       registry.register("jvm.uptime", new Gauge<Long>() {
@@ -263,7 +275,14 @@ public class WavefrontReporter extends ScheduledReporter {
 
     try {
       if (!wavefront.isConnected()) {
-        wavefront.connect();
+        try {
+          wavefront.connect();
+        } catch (java.net.ConnectException e) {
+          failures.inc();
+          connectExceptions.inc();
+          LOGGER.warn("Unable to connect to Wavefront proxy", wavefront, e);
+          return;
+        }
       }
 
       for (Map.Entry<String, Gauge> entry : gauges.entrySet()) {
@@ -287,9 +306,12 @@ public class WavefrontReporter extends ScheduledReporter {
       for (Map.Entry<String, Timer> entry : timers.entrySet()) {
         reportTimer(entry.getKey(), entry.getValue(), timestamp);
       }
-
       wavefront.flush();
+      successes.inc();
+
     } catch (IOException e) {
+      failures.inc();
+      ioExceptions.inc();
       LOGGER.warn("Unable to report to Wavefront", wavefront, e);
       try {
         wavefront.close();

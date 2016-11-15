@@ -6,10 +6,7 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-import java.net.UnknownHostException;
+import java.net.*;
 import java.nio.charset.Charset;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -101,7 +98,12 @@ public class Wavefront implements WavefrontSender {
       throw new UnknownHostException(address.getHostName());
     }
 
-    this.socket = socketFactory.createSocket(address.getAddress(), address.getPort());
+    try {
+      this.socket = socketFactory.createSocket(address.getAddress(), address.getPort());
+    } catch (ConnectException e) {
+      throw e;
+    }
+
     this.writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), UTF_8));
   }
 
@@ -134,12 +136,17 @@ public class Wavefront implements WavefrontSender {
 
   private void internalSend(String name, double value, @Nullable Long timestamp, String source,
                             @Nullable Map<String, String> pointTags) throws IOException {
+
     if (!isConnected()) {
       this.socket = null;
       try {
         connect();
       } catch (IllegalStateException ex) {
         // already connected.
+      } catch (ConnectException ex) {
+        // lost connection.
+        System.out.println("Throwing ConnectException");
+        throw ex;
       }
     }
     if (StringUtils.isBlank(name)) {
@@ -178,6 +185,9 @@ public class Wavefront implements WavefrontSender {
     } catch (IOException e) {
       failures.incrementAndGet();
       throw e;
+    } catch (Exception e) {
+      System.out.println("ERROR:");
+      System.out.println(e);
     }
   }
 
